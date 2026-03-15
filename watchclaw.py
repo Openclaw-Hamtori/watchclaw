@@ -4,6 +4,7 @@ import json
 import re
 from collections import Counter
 from dataclasses import dataclass, asdict
+from html import escape
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -223,6 +224,96 @@ def filter_incidents(incidents: List[Incident], min_severity: str, suppress_low_
     return result
 
 
+def render_html_dashboard(out_dir: Path, payload: Dict[str, object]) -> None:
+    reports_dir = out_dir / "reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    risk = str(payload["overallRisk"])
+    recurring = payload["recurringRisk"]
+    source_rows = payload["sourceSummary"]
+    patterns = payload["topPatterns"]
+    filters = payload["filters"]
+
+    def badge_class(sev: str) -> str:
+        return {"high": "sev-high", "medium": "sev-medium", "low": "sev-low"}.get(sev, "sev-low")
+
+    source_html = "".join(
+        f"<tr><td>{escape(str(row['source']))}</td><td>{row['incidentCount']}</td><td><code>{escape(json.dumps(row['severityBreakdown']))}</code></td></tr>"
+        for row in source_rows
+    ) or "<tr><td colspan='3'>No source incidents detected.</td></tr>"
+
+    pattern_html = "".join(
+        "<div class='card'>"
+        f"<div class='card-head'><span class='badge {badge_class(str(item['severity']))}'>{escape(str(item['severity']).upper())}</span>"
+        f"<strong>{escape(str(item['summary']))}</strong></div>"
+        f"<p>Count: <strong>{item['count']}</strong> across <strong>{item['sourceCount']}</strong> source(s)</p>"
+        f"<p class='muted'>Sample: <code>{escape(str(item['sample']))}</code></p>"
+        f"<p><strong>Next:</strong> {escape(str(item['next_action']))}</p>"
+        "</div>"
+        for item in patterns
+    ) or "<div class='card'><p>No known incident patterns detected under current filters.</p></div>"
+
+    html = f"""<!doctype html>
+<html lang='en'>
+<head>
+  <meta charset='utf-8'>
+  <meta name='viewport' content='width=device-width, initial-scale=1'>
+  <title>Watchclaw Dashboard</title>
+  <style>
+    :root {{ color-scheme: dark; }}
+    body {{ font-family: Inter, ui-sans-serif, system-ui, -apple-system, sans-serif; margin: 0; background: #0b1020; color: #e8ecf3; }}
+    .wrap {{ max-width: 1080px; margin: 0 auto; padding: 32px 20px 56px; }}
+    h1, h2 {{ margin: 0 0 12px; }}
+    .hero {{ display: grid; gap: 12px; margin-bottom: 24px; }}
+    .stats {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 18px 0 24px; }}
+    .stat, .card {{ background: #121933; border: 1px solid #243055; border-radius: 14px; padding: 16px; box-shadow: 0 8px 24px rgba(0,0,0,.18); }}
+    .stat .label {{ font-size: 12px; color: #9aa6c3; text-transform: uppercase; letter-spacing: .08em; }}
+    .stat .value {{ margin-top: 8px; font-size: 28px; font-weight: 700; }}
+    .muted {{ color: #98a3bd; }}
+    .badge {{ display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; letter-spacing: .05em; }}
+    .sev-high {{ background: rgba(239, 68, 68, .18); color: #fca5a5; }}
+    .sev-medium {{ background: rgba(245, 158, 11, .18); color: #fcd34d; }}
+    .sev-low {{ background: rgba(59, 130, 246, .18); color: #93c5fd; }}
+    .cards {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin-top: 14px; }}
+    .card-head {{ display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }}
+    table {{ width: 100%; border-collapse: collapse; background: #121933; border-radius: 14px; overflow: hidden; border: 1px solid #243055; }}
+    th, td {{ text-align: left; padding: 12px 14px; border-bottom: 1px solid #243055; vertical-align: top; }}
+    th {{ color: #a9b4cc; font-size: 13px; }}
+    code {{ white-space: pre-wrap; word-break: break-word; color: #cfe1ff; }}
+    .footer {{ margin-top: 30px; color: #93a0bc; font-size: 13px; }}
+  </style>
+</head>
+<body>
+  <div class='wrap'>
+    <div class='hero'>
+      <h1>Watchclaw Dashboard</h1>
+      <div class='muted'>Operator-facing runtime risk summary for agent workflows.</div>
+      <div class='muted'>Filters: minSeverity={escape(str(filters['minSeverity']))}, suppressLowNoise={escape(str(filters['suppressLowNoise']).lower())}</div>
+    </div>
+
+    <div class='stats'>
+      <div class='stat'><div class='label'>Overall risk</div><div class='value'>{escape(risk.upper())}</div></div>
+      <div class='stat'><div class='label'>Recurring score</div><div class='value'>{recurring['score']}</div><div class='muted'>{escape(str(recurring['band']))}</div></div>
+      <div class='stat'><div class='label'>Incidents</div><div class='value'>{payload['incidentCount']}</div></div>
+      <div class='stat'><div class='label'>Sources</div><div class='value'>{len(payload['sources'])}</div></div>
+    </div>
+
+    <h2>Source summary</h2>
+    <table>
+      <thead><tr><th>Source</th><th>Incidents</th><th>Severity breakdown</th></tr></thead>
+      <tbody>{source_html}</tbody>
+    </table>
+
+    <h2 style='margin-top: 24px;'>Pattern summary</h2>
+    <div class='cards'>{pattern_html}</div>
+
+    <div class='footer'>Generated by Watchclaw. Use this dashboard together with <code>reports/operator-summary.md</code> and <code>exports/durable-note.md</code>.</div>
+  </div>
+</body>
+</html>
+"""
+    (reports_dir / "dashboard.html").write_text(html)
+
+
 def write_outputs(out_dir: Path, incidents: List[Incident], sources: List[Path], min_severity: str, suppress_low_noise: bool) -> None:
     incidents_dir = out_dir / "incidents"
     reports_dir = out_dir / "reports"
@@ -350,6 +441,8 @@ def write_outputs(out_dir: Path, incidents: List[Incident], sources: List[Path],
     ]
     (exports_dir / "durable-note.md").write_text("\n".join(durable_lines) + "\n")
 
+    render_html_dashboard(out_dir, latest)
+
 
 def resolve_sources(log: str = "", log_dir: str = "", latest: int = 0) -> List[Path]:
     if log:
@@ -390,11 +483,12 @@ def main():
     for source in sources:
         incidents.extend(scan_file(source))
 
+    filtered = filter_incidents(dedupe_incidents(incidents), min_severity=min_severity, suppress_low_noise=suppress_low_noise)
     write_outputs(out_dir, incidents, sources, min_severity=min_severity, suppress_low_noise=suppress_low_noise)
     print(json.dumps({
         "ok": True,
         "sources": len(sources),
-        "incidents": len(filter_incidents(dedupe_incidents(incidents), min_severity=min_severity, suppress_low_noise=suppress_low_noise)),
+        "incidents": len(filtered),
         "configPath": str((Path(args.config).expanduser() if args.config else DEFAULT_CONFIG_PATH)) if (args.config or DEFAULT_CONFIG_PATH.exists()) else None,
     }, ensure_ascii=False))
 

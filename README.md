@@ -1,35 +1,66 @@
 # Watchclaw
 
-Watchclaw is a lightweight agent-ops watchdog for long-running assistant systems.
+Watchclaw is a local-first agent-ops watchdog for long-running assistant systems.
+
+It turns messy runtime evidence into:
+- operator-readable risk summaries
+- next-session handoff artifacts
+- durable-note exports
+- a lightweight HTML dashboard
 
 ## Why this exists
 Modern agent workflows fail in messy ways:
 - compaction timeouts
-- stuck sessions
-- retry loops
-- silent degradation in direct-message channels
-- weak handoff / continuity after a reset or new session
+- stuck or fragile sessions
+- handshake/probe problems
+- repeated tool/runtime friction
+- weak continuity after resets or new sessions
 
 Watchclaw focuses on one job first:
-**turn messy runtime evidence into operator-readable risk summaries and handoff artifacts.**
+**convert scattered runtime evidence into something an operator can actually use.**
 
-## MVP scope
-The first MVP should:
-1. ingest OpenClaw logs and related evidence files
-2. detect known failure patterns (timeout / compaction / handshake / session fragility)
-3. classify risk level
-4. generate a short operator summary
-5. generate a handoff note for the next session
-6. support scanning either a single log or the latest N logs in a directory
+## Current capability
+- single-log scan
+- multi-log scan
+- recurring-risk score
+- operator summary (`reports/operator-summary.md`)
+- handoff artifact (`reports/handoff.md`)
+- durable note export (`exports/durable-note.md`)
+- lightweight HTML dashboard (`reports/dashboard.html`)
+- config-based execution
+
+## Quick start
+```bash
+git clone https://github.com/Openclaw-Hamtori/watchclaw.git
+cd watchclaw
+python3 watchclaw.py --log-dir /tmp/openclaw --latest 3 --out .
+```
+
+For a lower-noise run:
+```bash
+python3 watchclaw.py --log-dir /tmp/openclaw --latest 3 --out . --suppress-low-noise
+```
+
+## Outputs
+- `incidents/latest.json`
+- `reports/operator-summary.md`
+- `reports/handoff.md`
+- `reports/dashboard.html`
+- `exports/durable-note.md`
 
 ## Initial user
 A power user or small team running OpenClaw-like agent workflows who needs reliability and continuity more than dashboards-for-show.
 
-## Initial product shape
-- local-first
-- file-driven
-- evidence-first
-- operator-readable summaries over noisy logs
+## Product direction
+Watchclaw starts as a **GitHub-distributed local tool**.
+If it proves real operator value, it can later become:
+- a pipx/Homebrew-installable CLI
+- a lightweight local dashboard app
+- eventually a hosted/team tool
 
-## Current status
-See `STATUS.md` and `PRD.md`.
+## Status
+See:
+- `STATUS.md`
+- `PRD.md`
+- `ROADMAP.md`
+- `RELEASE-CHECKLIST.md`

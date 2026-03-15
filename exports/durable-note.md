@@ -3,6 +3,7 @@
 Date basis: /tmp/openclaw/openclaw-2026-03-12.log, /tmp/openclaw/openclaw-2026-03-14.log, /tmp/openclaw/openclaw-2026-03-15.log
 Overall risk: high
 Recurring risk score: 117 (critical)
+Filters: minSeverity=low, suppressLowNoise=true
 
 ## Suggested durable note
 - Compaction timeout or abort detected recurred 1 time(s) across 1 source(s). Next action: Reduce session bloat, inspect compaction settings, and prefer durable handoff artifacts.

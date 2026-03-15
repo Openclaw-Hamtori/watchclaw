@@ -4,6 +4,7 @@
 - Overall risk: **HIGH**
 - Recurring risk score: **117** (`critical`)
 - Incident count: **36**
+- Active filters: `minSeverity=low, suppressLowNoise=true`
 - Severity breakdown: `{"low": 33, "medium": 2, "high": 1}`
 
 ## Source summary

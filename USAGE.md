@@ -26,6 +26,7 @@ python3 watchclaw.py
 - `incidents/latest.json`
 - `reports/operator-summary.md`
 - `reports/handoff.md`
+- `reports/dashboard.html`
 - `exports/durable-note.md`
 
 ## Current best use

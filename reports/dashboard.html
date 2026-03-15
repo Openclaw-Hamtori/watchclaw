@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang='en'>
+<head>
+  <meta charset='utf-8'>
+  <meta name='viewport' content='width=device-width, initial-scale=1'>
+  <title>Watchclaw Dashboard</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { font-family: Inter, ui-sans-serif, system-ui, -apple-system, sans-serif; margin: 0; background: #0b1020; color: #e8ecf3; }
+    .wrap { max-width: 1080px; margin: 0 auto; padding: 32px 20px 56px; }
+    h1, h2 { margin: 0 0 12px; }
+    .hero { display: grid; gap: 12px; margin-bottom: 24px; }
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 18px 0 24px; }
+    .stat, .card { background: #121933; border: 1px solid #243055; border-radius: 14px; padding: 16px; box-shadow: 0 8px 24px rgba(0,0,0,.18); }
+    .stat .label { font-size: 12px; color: #9aa6c3; text-transform: uppercase; letter-spacing: .08em; }
+    .stat .value { margin-top: 8px; font-size: 28px; font-weight: 700; }
+    .muted { color: #98a3bd; }
+    .badge { display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; letter-spacing: .05em; }
+    .sev-high { background: rgba(239, 68, 68, .18); color: #fca5a5; }
+    .sev-medium { background: rgba(245, 158, 11, .18); color: #fcd34d; }
+    .sev-low { background: rgba(59, 130, 246, .18); color: #93c5fd; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin-top: 14px; }
+    .card-head { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
+    table { width: 100%; border-collapse: collapse; background: #121933; border-radius: 14px; overflow: hidden; border: 1px solid #243055; }
+    th, td { text-align: left; padding: 12px 14px; border-bottom: 1px solid #243055; vertical-align: top; }
+    th { color: #a9b4cc; font-size: 13px; }
+    code { white-space: pre-wrap; word-break: break-word; color: #cfe1ff; }
+    .footer { margin-top: 30px; color: #93a0bc; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div class='wrap'>
+    <div class='hero'>
+      <h1>Watchclaw Dashboard</h1>
+      <div class='muted'>Operator-facing runtime risk summary for agent workflows.</div>
+      <div class='muted'>Filters: minSeverity=low, suppressLowNoise=true</div>
+    </div>
+
+    <div class='stats'>
+      <div class='stat'><div class='label'>Overall risk</div><div class='value'>HIGH</div></div>
+      <div class='stat'><div class='label'>Recurring score</div><div class='value'>117</div><div class='muted'>critical</div></div>
+      <div class='stat'><div class='label'>Incidents</div><div class='value'>36</div></div>
+      <div class='stat'><div class='label'>Sources</div><div class='value'>3</div></div>
+    </div>
+
+    <h2>Source summary</h2>
+    <table>
+      <thead><tr><th>Source</th><th>Incidents</th><th>Severity breakdown</th></tr></thead>
+      <tbody><tr><td>/tmp/openclaw/openclaw-2026-03-12.log</td><td>20</td><td><code>{&quot;low&quot;: 18, &quot;medium&quot;: 2}</code></td></tr><tr><td>/tmp/openclaw/openclaw-2026-03-14.log</td><td>8</td><td><code>{&quot;low&quot;: 8}</code></td></tr><tr><td>/tmp/openclaw/openclaw-2026-03-15.log</td><td>8</td><td><code>{&quot;low&quot;: 7, &quot;high&quot;: 1}</code></td></tr></tbody>
+    </table>
+
+    <h2 style='margin-top: 24px;'>Pattern summary</h2>
+    <div class='cards'><div class='card'><div class='card-head'><span class='badge sev-high'>HIGH</span><strong>Compaction timeout or abort detected</strong></div><p>Count: <strong>1</strong> across <strong>1</strong> source(s)</p><p class='muted'>Sample: <code>{&quot;0&quot;:&quot;{\&quot;subsystem\&quot;:\&quot;agent/embedded\&quot;}&quot;,&quot;1&quot;:&quot;[compaction-diag] end runId=2a2145fd-0019-4b04-ba1b-57a12c38052b sessionKey=agent:main:telegram:direct:1629239187 diagId=cmp-mmr84zvo-RSOUrA trigger=manual provider=opena...</code></p><p><strong>Next:</strong> Reduce session bloat, inspect compaction settings, and prefer durable handoff artifacts.</p></div><div class='card'><div class='card-head'><span class='badge sev-medium'>MEDIUM</span><strong>Session fragility signal detected</strong></div><p>Count: <strong>2</strong> across <strong>1</strong> source(s)</p><p class='muted'>Sample: <code>{&quot;0&quot;:&quot;{\&quot;subsystem\&quot;:\&quot;gateway/channels/telegram\&quot;}&quot;,&quot;1&quot;:&quot;[telegram] Polling stall detected (no getUpdates for 105.86s); forcing restart.&quot;,&quot;_meta&quot;:{&quot;runtime&quot;:&quot;node&quot;,&quot;runtimeVersion&quot;:&quot;25.8.0&quot;,&quot;hostname&quot;:&quot;unknown&quot;,&quot;name...</code></p><p><strong>Next:</strong> Treat this session as fragile; create a handoff and consider reset/new-session recovery.</p></div><div class='card'><div class='card-head'><span class='badge sev-low'>LOW</span><strong>A command used `python` but only `python3` may exist</strong></div><p>Count: <strong>14</strong> across <strong>3</strong> source(s)</p><p class='muted'>Sample: <code>{&quot;0&quot;:&quot;[tools] exec failed: zsh:1: command not found: python\n\nCommand not found&quot;,&quot;_meta&quot;:{&quot;runtime&quot;:&quot;node&quot;,&quot;runtimeVersion&quot;:&quot;25.8.0&quot;,&quot;hostname&quot;:&quot;unknown&quot;,&quot;name&quot;:&quot;openclaw&quot;,&quot;date&quot;:&quot;2026-03-12T00:00:36.929Z&quot;,&quot;logLevelI...</code></p><p><strong>Next:</strong> Replace `python` with `python3` in scripts/cron jobs on this host.</p></div><div class='card'><div class='card-head'><span class='badge sev-low'>LOW</span><strong>A file-read operation targeted a missing file</strong></div><p>Count: <strong>8</strong> across <strong>3</strong> source(s)</p><p class='muted'>Sample: <code>{&quot;0&quot;:&quot;[tools] read failed: ENOENT: no such file or directory, access &#x27;/Users/chaesung/.openclaw/workspace/memory/2026-03-12.md&#x27;&quot;,&quot;_meta&quot;:{&quot;runtime&quot;:&quot;node&quot;,&quot;runtimeVersion&quot;:&quot;25.8.0&quot;,&quot;hostname&quot;:&quot;unknown&quot;,&quot;name&quot;:&quot;opencla...</code></p><p><strong>Next:</strong> Check whether the file should be created first or conditionally skipped.</p></div><div class='card'><div class='card-head'><span class='badge sev-low'>LOW</span><strong>An exact-text edit failed because the source content changed</strong></div><p>Count: <strong>7</strong> across <strong>3</strong> source(s)</p><p class='muted'>Sample: <code>{&quot;0&quot;:&quot;[tools] edit failed: Could not find the exact text in /Users/chaesung/Desktop/Presence_GPT/presence-test-app/ios/PresenceTestApp.xcodeproj/project.pbxproj. The old text must match exactly including all whitespac...</code></p><p><strong>Next:</strong> Re-read the file and apply a fresh patch against current contents.</p></div><div class='card'><div class='card-head'><span class='badge sev-low'>LOW</span><strong>A command expected ripgrep (`rg`) but it is unavailable</strong></div><p>Count: <strong>4</strong> across <strong>3</strong> source(s)</p><p class='muted'>Sample: <code>{&quot;0&quot;:&quot;[tools] exec failed: zsh:1: command not found: rg\n\nCommand not found&quot;,&quot;_meta&quot;:{&quot;runtime&quot;:&quot;node&quot;,&quot;runtimeVersion&quot;:&quot;25.8.0&quot;,&quot;hostname&quot;:&quot;unknown&quot;,&quot;name&quot;:&quot;openclaw&quot;,&quot;date&quot;:&quot;2026-03-13T07:06:41.715Z&quot;,&quot;logLevelId&quot;:5...</code></p><p><strong>Next:</strong> Use `grep` fallback or install `rg` if desired.</p></div></div>
+
+    <div class='footer'>Generated by Watchclaw. Use this dashboard together with <code>reports/operator-summary.md</code> and <code>exports/durable-note.md</code>.</div>
+  </div>
+</body>
+</html>
