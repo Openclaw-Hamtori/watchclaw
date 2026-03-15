@@ -5,7 +5,7 @@ import re
 from collections import Counter
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 PATTERNS = [
     {
@@ -64,6 +64,7 @@ SEVERITY_RANK = {"low": 1, "medium": 2, "high": 3}
 
 @dataclass
 class Incident:
+    source: str
     pattern_id: str
     severity: str
     summary: str
@@ -89,6 +90,7 @@ def scan_file(path: Path) -> List[Incident]:
             if pattern["regex"].search(line):
                 incidents.append(
                     Incident(
+                        source=str(path),
                         pattern_id=pattern["id"],
                         severity=pattern["severity"],
                         summary=pattern["summary"],
@@ -105,7 +107,7 @@ def dedupe_incidents(incidents: List[Incident]) -> List[Incident]:
     seen = set()
     deduped: List[Incident] = []
     for incident in incidents:
-        fingerprint = (incident.pattern_id, incident.line)
+        fingerprint = (incident.source, incident.pattern_id, incident.line)
         if fingerprint in seen:
             continue
         seen.add(fingerprint)
@@ -132,18 +134,39 @@ def top_patterns(incidents: List[Incident]) -> List[Dict[str, object]]:
                 "severity": incident.severity,
                 "summary": incident.summary,
                 "count": 0,
+                "sources": set(),
                 "firstLine": incident.line_no,
                 "sample": incident.line,
                 "next_action": incident.next_action,
             }
         grouped[incident.pattern_id]["count"] += 1
+        grouped[incident.pattern_id]["sources"].add(incident.source)
 
     items = list(grouped.values())
-    items.sort(key=lambda x: (-SEVERITY_RANK[str(x["severity"])] , -int(x["count"]), int(x["firstLine"])))
+    for item in items:
+        item["sourceCount"] = len(item["sources"])
+        item["sources"] = sorted(item["sources"])
+
+    items.sort(key=lambda x: (-SEVERITY_RANK[str(x["severity"])] , -int(x["count"]), -int(x["sourceCount"]), int(x["firstLine"])))
     return items
 
 
-def write_outputs(out_dir: Path, incidents: List[Incident], source: Path) -> None:
+def source_summary(incidents: List[Incident]) -> List[Dict[str, object]]:
+    grouped: Dict[str, Counter] = {}
+    for incident in incidents:
+        grouped.setdefault(incident.source, Counter())
+        grouped[incident.source][incident.severity] += 1
+    rows = []
+    for source, counter in sorted(grouped.items()):
+        rows.append({
+            "source": source,
+            "incidentCount": sum(counter.values()),
+            "severityBreakdown": dict(counter),
+        })
+    return rows
+
+
+def write_outputs(out_dir: Path, incidents: List[Incident], sources: List[Path]) -> None:
     incidents_dir = out_dir / "incidents"
     reports_dir = out_dir / "reports"
     incidents_dir.mkdir(parents=True, exist_ok=True)
@@ -153,12 +176,14 @@ def write_outputs(out_dir: Path, incidents: List[Incident], source: Path) -> Non
     grouped = top_patterns(deduped)
     sev_counts = Counter(i.severity for i in deduped)
     risk = overall_risk(deduped)
+    source_rows = source_summary(deduped)
 
     latest = {
-        "source": str(source),
+        "sources": [str(s) for s in sources],
         "incidentCount": len(deduped),
         "overallRisk": risk,
         "severityBreakdown": dict(sev_counts),
+        "sourceSummary": source_rows,
         "topPatterns": grouped,
         "incidents": [asdict(i) for i in deduped],
     }
@@ -167,10 +192,20 @@ def write_outputs(out_dir: Path, incidents: List[Incident], source: Path) -> Non
     summary_lines = [
         "# Watchclaw Operator Summary",
         "",
-        f"- Source: `{source}`",
+        f"- Sources scanned: **{len(sources)}**",
         f"- Overall risk: **{risk.upper()}**",
         f"- Incident count: **{len(deduped)}**",
         f"- Severity breakdown: `{json.dumps(dict(sev_counts), ensure_ascii=False)}`",
+        "",
+        "## Source summary",
+    ]
+    if source_rows:
+        for row in source_rows:
+            summary_lines.append(f"- `{row['source']}` → {row['incidentCount']} incidents / {row['severityBreakdown']}")
+    else:
+        summary_lines.append("- No source incidents detected.")
+
+    summary_lines += [
         "",
         "## Pattern summary",
     ]
@@ -179,15 +214,12 @@ def write_outputs(out_dir: Path, incidents: List[Incident], source: Path) -> Non
     else:
         for item in grouped[:8]:
             summary_lines += [
-                f"- [{item['severity']}] {item['summary']} × {item['count']} (first seen line {item['firstLine']})",
+                f"- [{item['severity']}] {item['summary']} × {item['count']} across {item['sourceCount']} source(s)",
                 f"  - sample: `{item['sample']}`",
                 f"  - next: {item['next_action']}",
             ]
 
-    summary_lines += [
-        "",
-        "## Operator read",
-    ]
+    summary_lines += ["", "## Operator read"]
     if risk == "high":
         summary_lines.append("- High-severity runtime risk was detected. Treat the current workflow as potentially fragile until verified.")
     elif risk == "medium":
@@ -203,7 +235,7 @@ def write_outputs(out_dir: Path, incidents: List[Incident], source: Path) -> Non
         "# Watchclaw Handoff",
         "",
         "## Current read",
-        f"- Parsed log: `{source}`",
+        f"- Sources scanned: {len(sources)}",
         f"- Overall risk: {risk}",
         f"- Incident count: {len(deduped)}",
         "",
@@ -214,7 +246,7 @@ def write_outputs(out_dir: Path, incidents: List[Incident], source: Path) -> Non
     else:
         for item in grouped[:5]:
             handoff_lines.append(
-                f"- [{item['severity']}] {item['summary']} × {item['count']} → {item['next_action']}"
+                f"- [{item['severity']}] {item['summary']} × {item['count']} across {item['sourceCount']} source(s) → {item['next_action']}"
             )
 
     handoff_lines += [
@@ -227,18 +259,36 @@ def write_outputs(out_dir: Path, incidents: List[Incident], source: Path) -> Non
     (reports_dir / "handoff.md").write_text("\n".join(handoff_lines) + "\n")
 
 
+def resolve_sources(log: str = "", log_dir: str = "", latest: int = 0) -> List[Path]:
+    if log:
+        return [Path(log).expanduser()]
+    if log_dir:
+        base = Path(log_dir).expanduser()
+        files = sorted(base.glob("openclaw-*.log"))
+        return files[-latest:] if latest > 0 else files
+    return []
+
+
 def main():
     parser = argparse.ArgumentParser(description="Watchclaw log scanner")
     parser.add_argument("scan", nargs="?", default="scan")
-    parser.add_argument("--log", required=True, help="Path to OpenClaw log file")
+    parser.add_argument("--log", help="Path to a single OpenClaw log file")
+    parser.add_argument("--log-dir", help="Directory containing OpenClaw log files")
+    parser.add_argument("--latest", type=int, default=0, help="When using --log-dir, scan only the latest N logs")
     parser.add_argument("--out", default=".", help="Output directory")
     args = parser.parse_args()
 
-    log_path = Path(args.log).expanduser()
+    sources = resolve_sources(args.log or "", args.log_dir or "", args.latest)
+    if not sources:
+        raise SystemExit("No log sources found. Use --log or --log-dir.")
+
     out_dir = Path(args.out).expanduser()
-    incidents = scan_file(log_path)
-    write_outputs(out_dir, incidents, log_path)
-    print(json.dumps({"ok": True, "incidents": len(dedupe_incidents(incidents)), "source": str(log_path)}, ensure_ascii=False))
+    incidents: List[Incident] = []
+    for source in sources:
+        incidents.extend(scan_file(source))
+
+    write_outputs(out_dir, incidents, sources)
+    print(json.dumps({"ok": True, "sources": len(sources), "incidents": len(dedupe_incidents(incidents))}, ensure_ascii=False))
 
 
 if __name__ == "__main__":

@@ -20,6 +20,7 @@ The first MVP should:
 3. classify risk level
 4. generate a short operator summary
 5. generate a handoff note for the next session
+6. support scanning either a single log or the latest N logs in a directory
 
 ## Initial user
 A power user or small team running OpenClaw-like agent workflows who needs reliability and continuity more than dashboards-for-show.
