@@ -1,0 +1,7 @@
+{
+  "logDir": "/tmp/openclaw",
+  "latest": 3,
+  "out": ".",
+  "minSeverity": "low",
+  "suppressLowNoise": true
+}

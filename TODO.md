@@ -3,8 +3,8 @@
 ## Immediate
 - [x] Add recurring-risk score across multiple logs
 - [x] Export a durable-note format suitable for direct copy into operator notes
-- [ ] Reduce low-signal noise from generic tool failures
-- [ ] Add config file support for default log directory/output path
+- [x] Reduce low-signal noise from generic tool failures
+- [x] Add config file support for default log directory/output path
 
 ## Near-term
 - [ ] Add small local HTML dashboard

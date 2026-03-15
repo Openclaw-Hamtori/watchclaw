@@ -5,7 +5,7 @@ import re
 from collections import Counter
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 PATTERNS = [
     {
@@ -61,6 +61,7 @@ PATTERNS = [
 
 SEVERITY_RANK = {"low": 1, "medium": 2, "high": 3}
 SCORE_PER_SEVERITY = {"low": 1, "medium": 4, "high": 10}
+DEFAULT_CONFIG_PATH = Path.home() / ".config" / "watchclaw" / "config.json"
 
 
 @dataclass
@@ -77,6 +78,16 @@ class Incident:
 def compact_line(line: str, max_len: int = 220) -> str:
     text = " ".join(line.strip().split())
     return text if len(text) <= max_len else text[: max_len - 3] + "..."
+
+
+def load_config(path: Optional[str]) -> Dict[str, object]:
+    config_path = Path(path).expanduser() if path else DEFAULT_CONFIG_PATH
+    if not config_path.exists():
+        return {}
+    try:
+        return json.loads(config_path.read_text())
+    except Exception:
+        return {}
 
 
 def scan_file(path: Path) -> List[Incident]:
@@ -137,7 +148,7 @@ def recurring_risk_score(incidents: List[Incident]) -> Dict[str, object]:
 
     for incident in incidents:
         score += SCORE_PER_SEVERITY[incident.severity]
-    for pattern_id, count in patterns.items():
+    for _, count in patterns.items():
         if count > 1:
             score += (count - 1) * 2
     if unique_sources > 1:
@@ -195,7 +206,24 @@ def source_summary(incidents: List[Incident]) -> List[Dict[str, object]]:
     return rows
 
 
-def write_outputs(out_dir: Path, incidents: List[Incident], sources: List[Path]) -> None:
+def filter_incidents(incidents: List[Incident], min_severity: str, suppress_low_noise: bool) -> List[Incident]:
+    threshold = SEVERITY_RANK[min_severity]
+    filtered = [i for i in incidents if SEVERITY_RANK[i.severity] >= threshold]
+    if not suppress_low_noise:
+        return filtered
+
+    counts = Counter(i.pattern_id for i in filtered)
+    result: List[Incident] = []
+    for incident in filtered:
+        if incident.severity != "low":
+            result.append(incident)
+            continue
+        if counts[incident.pattern_id] >= 3:
+            result.append(incident)
+    return result
+
+
+def write_outputs(out_dir: Path, incidents: List[Incident], sources: List[Path], min_severity: str, suppress_low_noise: bool) -> None:
     incidents_dir = out_dir / "incidents"
     reports_dir = out_dir / "reports"
     exports_dir = out_dir / "exports"
@@ -204,21 +232,26 @@ def write_outputs(out_dir: Path, incidents: List[Incident], sources: List[Path])
     exports_dir.mkdir(parents=True, exist_ok=True)
 
     deduped = dedupe_incidents(incidents)
-    grouped = top_patterns(deduped)
-    sev_counts = Counter(i.severity for i in deduped)
-    risk = overall_risk(deduped)
-    recurring = recurring_risk_score(deduped)
-    source_rows = source_summary(deduped)
+    filtered = filter_incidents(deduped, min_severity=min_severity, suppress_low_noise=suppress_low_noise)
+    grouped = top_patterns(filtered)
+    sev_counts = Counter(i.severity for i in filtered)
+    risk = overall_risk(filtered)
+    recurring = recurring_risk_score(filtered)
+    source_rows = source_summary(filtered)
 
     latest = {
         "sources": [str(s) for s in sources],
-        "incidentCount": len(deduped),
+        "incidentCount": len(filtered),
         "overallRisk": risk,
         "recurringRisk": recurring,
         "severityBreakdown": dict(sev_counts),
         "sourceSummary": source_rows,
         "topPatterns": grouped,
-        "incidents": [asdict(i) for i in deduped],
+        "filters": {
+            "minSeverity": min_severity,
+            "suppressLowNoise": suppress_low_noise,
+        },
+        "incidents": [asdict(i) for i in filtered],
     }
     (incidents_dir / "latest.json").write_text(json.dumps(latest, ensure_ascii=False, indent=2))
 
@@ -228,7 +261,8 @@ def write_outputs(out_dir: Path, incidents: List[Incident], sources: List[Path])
         f"- Sources scanned: **{len(sources)}**",
         f"- Overall risk: **{risk.upper()}**",
         f"- Recurring risk score: **{recurring['score']}** (`{recurring['band']}`)",
-        f"- Incident count: **{len(deduped)}**",
+        f"- Incident count: **{len(filtered)}**",
+        f"- Active filters: `minSeverity={min_severity}, suppressLowNoise={str(suppress_low_noise).lower()}`",
         f"- Severity breakdown: `{json.dumps(dict(sev_counts), ensure_ascii=False)}`",
         "",
         "## Source summary",
@@ -241,7 +275,7 @@ def write_outputs(out_dir: Path, incidents: List[Incident], sources: List[Path])
 
     summary_lines += ["", "## Pattern summary"]
     if not grouped:
-        summary_lines.append("- No known incident patterns detected.")
+        summary_lines.append("- No known incident patterns detected under current filters.")
     else:
         for item in grouped[:8]:
             summary_lines += [
@@ -271,7 +305,7 @@ def write_outputs(out_dir: Path, incidents: List[Incident], sources: List[Path])
         f"- Sources scanned: {len(sources)}",
         f"- Overall risk: {risk}",
         f"- Recurring risk score: {recurring['score']} ({recurring['band']})",
-        f"- Incident count: {len(deduped)}",
+        f"- Incident count: {len(filtered)}",
         "",
         "## What the next session should know",
     ]
@@ -298,6 +332,7 @@ def write_outputs(out_dir: Path, incidents: List[Incident], sources: List[Path])
         f"Date basis: {', '.join(str(s) for s in sources)}",
         f"Overall risk: {risk}",
         f"Recurring risk score: {recurring['score']} ({recurring['band']})",
+        f"Filters: minSeverity={min_severity}, suppressLowNoise={str(suppress_low_noise).lower()}",
         "",
         "## Suggested durable note",
     ]
@@ -332,20 +367,36 @@ def main():
     parser.add_argument("--log", help="Path to a single OpenClaw log file")
     parser.add_argument("--log-dir", help="Directory containing OpenClaw log files")
     parser.add_argument("--latest", type=int, default=0, help="When using --log-dir, scan only the latest N logs")
-    parser.add_argument("--out", default=".", help="Output directory")
+    parser.add_argument("--out", help="Output directory")
+    parser.add_argument("--config", help="Path to config JSON")
+    parser.add_argument("--min-severity", choices=["low", "medium", "high"], help="Minimum severity to include")
+    parser.add_argument("--suppress-low-noise", action="store_true", help="Hide one-off low-severity noise patterns")
     args = parser.parse_args()
 
-    sources = resolve_sources(args.log or "", args.log_dir or "", args.latest)
+    config = load_config(args.config)
+    log_arg = args.log or str(config.get("log", ""))
+    log_dir_arg = args.log_dir or str(config.get("logDir", ""))
+    latest_arg = args.latest or int(config.get("latest", 0) or 0)
+    out_arg = args.out or str(config.get("out", "."))
+    min_severity = args.min_severity or str(config.get("minSeverity", "low"))
+    suppress_low_noise = args.suppress_low_noise or bool(config.get("suppressLowNoise", False))
+
+    sources = resolve_sources(log_arg, log_dir_arg, latest_arg)
     if not sources:
         raise SystemExit("No log sources found. Use --log or --log-dir.")
 
-    out_dir = Path(args.out).expanduser()
+    out_dir = Path(out_arg).expanduser()
     incidents: List[Incident] = []
     for source in sources:
         incidents.extend(scan_file(source))
 
-    write_outputs(out_dir, incidents, sources)
-    print(json.dumps({"ok": True, "sources": len(sources), "incidents": len(dedupe_incidents(incidents))}, ensure_ascii=False))
+    write_outputs(out_dir, incidents, sources, min_severity=min_severity, suppress_low_noise=suppress_low_noise)
+    print(json.dumps({
+        "ok": True,
+        "sources": len(sources),
+        "incidents": len(filter_incidents(dedupe_incidents(incidents), min_severity=min_severity, suppress_low_noise=suppress_low_noise)),
+        "configPath": str((Path(args.config).expanduser() if args.config else DEFAULT_CONFIG_PATH)) if (args.config or DEFAULT_CONFIG_PATH.exists()) else None,
+    }, ensure_ascii=False))
 
 
 if __name__ == "__main__":
