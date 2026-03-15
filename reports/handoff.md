@@ -1,16 +1,17 @@
 # Watchclaw Handoff
 
 ## Current read
-- Parsed log: `/tmp/openclaw/openclaw-2026-03-15.log`
+- Sources scanned: 3
 - Overall risk: high
-- Incident count: 7
+- Recurring risk score: 117 (critical)
+- Incident count: 36
 
 ## What the next session should know
-- [high] Compaction timeout or abort detected × 1 → Reduce session bloat, inspect compaction settings, and prefer durable handoff artifacts.
-- [low] A command used `python` but only `python3` may exist × 3 → Replace `python` with `python3` in scripts/cron jobs on this host.
-- [low] A file-read operation targeted a missing file × 1 → Check whether the file should be created first or conditionally skipped.
-- [low] An exact-text edit failed because the source content changed × 1 → Re-read the file and apply a fresh patch against current contents.
-- [low] A command expected ripgrep (`rg`) but it is unavailable × 1 → Use `grep` fallback or install `rg` if desired.
+- [high] Compaction timeout or abort detected × 1 across 1 source(s) → Reduce session bloat, inspect compaction settings, and prefer durable handoff artifacts.
+- [medium] Session fragility signal detected × 2 across 1 source(s) → Treat this session as fragile; create a handoff and consider reset/new-session recovery.
+- [low] A command used `python` but only `python3` may exist × 14 across 3 source(s) → Replace `python` with `python3` in scripts/cron jobs on this host.
+- [low] A file-read operation targeted a missing file × 8 across 3 source(s) → Check whether the file should be created first or conditionally skipped.
+- [low] An exact-text edit failed because the source content changed × 7 across 3 source(s) → Re-read the file and apply a fresh patch against current contents.
 
 ## Recommended next checks
 - verify whether the top pattern is recurring or one-off

@@ -60,6 +60,7 @@ PATTERNS = [
 ]
 
 SEVERITY_RANK = {"low": 1, "medium": 2, "high": 3}
+SCORE_PER_SEVERITY = {"low": 1, "medium": 4, "high": 10}
 
 
 @dataclass
@@ -125,6 +126,34 @@ def overall_risk(incidents: List[Incident]) -> str:
     return "none"
 
 
+def recurring_risk_score(incidents: List[Incident]) -> Dict[str, object]:
+    if not incidents:
+        return {"score": 0, "band": "none"}
+
+    score = 0
+    patterns = Counter(i.pattern_id for i in incidents)
+    source_counts = Counter(i.source for i in incidents)
+    unique_sources = len(source_counts)
+
+    for incident in incidents:
+        score += SCORE_PER_SEVERITY[incident.severity]
+    for pattern_id, count in patterns.items():
+        if count > 1:
+            score += (count - 1) * 2
+    if unique_sources > 1:
+        score += (unique_sources - 1) * 3
+
+    if score >= 40:
+        band = "critical"
+    elif score >= 20:
+        band = "high"
+    elif score >= 8:
+        band = "medium"
+    else:
+        band = "low"
+    return {"score": score, "band": band}
+
+
 def top_patterns(incidents: List[Incident]) -> List[Dict[str, object]]:
     grouped: Dict[str, Dict[str, object]] = {}
     for incident in incidents:
@@ -169,19 +198,23 @@ def source_summary(incidents: List[Incident]) -> List[Dict[str, object]]:
 def write_outputs(out_dir: Path, incidents: List[Incident], sources: List[Path]) -> None:
     incidents_dir = out_dir / "incidents"
     reports_dir = out_dir / "reports"
+    exports_dir = out_dir / "exports"
     incidents_dir.mkdir(parents=True, exist_ok=True)
     reports_dir.mkdir(parents=True, exist_ok=True)
+    exports_dir.mkdir(parents=True, exist_ok=True)
 
     deduped = dedupe_incidents(incidents)
     grouped = top_patterns(deduped)
     sev_counts = Counter(i.severity for i in deduped)
     risk = overall_risk(deduped)
+    recurring = recurring_risk_score(deduped)
     source_rows = source_summary(deduped)
 
     latest = {
         "sources": [str(s) for s in sources],
         "incidentCount": len(deduped),
         "overallRisk": risk,
+        "recurringRisk": recurring,
         "severityBreakdown": dict(sev_counts),
         "sourceSummary": source_rows,
         "topPatterns": grouped,
@@ -194,6 +227,7 @@ def write_outputs(out_dir: Path, incidents: List[Incident], sources: List[Path])
         "",
         f"- Sources scanned: **{len(sources)}**",
         f"- Overall risk: **{risk.upper()}**",
+        f"- Recurring risk score: **{recurring['score']}** (`{recurring['band']}`)",
         f"- Incident count: **{len(deduped)}**",
         f"- Severity breakdown: `{json.dumps(dict(sev_counts), ensure_ascii=False)}`",
         "",
@@ -205,10 +239,7 @@ def write_outputs(out_dir: Path, incidents: List[Incident], sources: List[Path])
     else:
         summary_lines.append("- No source incidents detected.")
 
-    summary_lines += [
-        "",
-        "## Pattern summary",
-    ]
+    summary_lines += ["", "## Pattern summary"]
     if not grouped:
         summary_lines.append("- No known incident patterns detected.")
     else:
@@ -228,6 +259,8 @@ def write_outputs(out_dir: Path, incidents: List[Incident], sources: List[Path])
         summary_lines.append("- Only lower-grade issues were found; likely operational friction more than system instability.")
     else:
         summary_lines.append("- No known incident signatures were detected in this scan.")
+    if recurring["band"] in {"high", "critical"}:
+        summary_lines.append("- This looks recurring enough to deserve durable notes and a concrete mitigation plan, not just ad-hoc observation.")
 
     (reports_dir / "operator-summary.md").write_text("\n".join(summary_lines) + "\n")
 
@@ -237,6 +270,7 @@ def write_outputs(out_dir: Path, incidents: List[Incident], sources: List[Path])
         "## Current read",
         f"- Sources scanned: {len(sources)}",
         f"- Overall risk: {risk}",
+        f"- Recurring risk score: {recurring['score']} ({recurring['band']})",
         f"- Incident count: {len(deduped)}",
         "",
         "## What the next session should know",
@@ -257,6 +291,29 @@ def write_outputs(out_dir: Path, incidents: List[Incident], sources: List[Path])
         "- copy confirmed conclusions into durable operating notes",
     ]
     (reports_dir / "handoff.md").write_text("\n".join(handoff_lines) + "\n")
+
+    durable_lines = [
+        "# Durable Note Export",
+        "",
+        f"Date basis: {', '.join(str(s) for s in sources)}",
+        f"Overall risk: {risk}",
+        f"Recurring risk score: {recurring['score']} ({recurring['band']})",
+        "",
+        "## Suggested durable note",
+    ]
+    if grouped:
+        for item in grouped[:5]:
+            durable_lines.append(
+                f"- {item['summary']} recurred {item['count']} time(s) across {item['sourceCount']} source(s). Next action: {item['next_action']}"
+            )
+    else:
+        durable_lines.append("- No durable incidents suggested from this scan.")
+    durable_lines += [
+        "",
+        "## Why it matters",
+        "- Use this block when a pattern is no longer a one-off and should be promoted into durable operating memory.",
+    ]
+    (exports_dir / "durable-note.md").write_text("\n".join(durable_lines) + "\n")
 
 
 def resolve_sources(log: str = "", log_dir: str = "", latest: int = 0) -> List[Path]:

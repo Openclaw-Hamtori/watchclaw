@@ -17,6 +17,8 @@ Lightweight agent-ops watchdog for log-based failure detection, operator summari
   - `incidents/latest.json`
   - `reports/operator-summary.md`
   - `reports/handoff.md`
+  - `exports/durable-note.md`
+- computes a recurring-risk score across multiple logs
 - detected real issues in local logs including compaction timeout and session fragility
 
 ## Main risks

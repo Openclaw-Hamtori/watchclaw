@@ -1,8 +1,8 @@
 # Watchclaw TODO
 
 ## Immediate
-- [ ] Add recurring-risk score across multiple logs
-- [ ] Export a durable-note format suitable for direct copy into operator notes
+- [x] Add recurring-risk score across multiple logs
+- [x] Export a durable-note format suitable for direct copy into operator notes
 - [ ] Reduce low-signal noise from generic tool failures
 - [ ] Add config file support for default log directory/output path
 
