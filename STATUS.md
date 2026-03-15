@@ -15,6 +15,8 @@ Lightweight agent-ops watchdog for log-based failure detection, operator summari
 - poor classification quality on noisy logs
 
 ## Next 3 actions
-1. build `watchclaw.py`
-2. test against `/tmp/openclaw/openclaw-2026-03-15.log`
+1. tighten pattern heuristics using more real OpenClaw logs
+2. add folder-scan mode for the latest N log files
+3. prepare remote repo path and simple usage docs
+3-15.log`
 3. review outputs and tighten incident heuristics
