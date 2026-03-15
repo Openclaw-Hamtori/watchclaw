@@ -26,6 +26,7 @@ Lightweight agent-ops watchdog for log-based failure detection, operator summari
 - generic observability drift
 - poor classification quality on noisy logs
 - current heuristics still overweight some low-signal tool failures
+- execution-trust risk if progress reports are not immediately matched by concrete action and clear repo-state reporting
 
 ## Next 3 actions
 1. add recurring-risk score across multiple logs

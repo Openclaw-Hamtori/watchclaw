@@ -5,6 +5,7 @@
 - [x] Export a durable-note format suitable for direct copy into operator notes
 - [x] Reduce low-signal noise from generic tool failures
 - [x] Add config file support for default log directory/output path
+- [ ] Establish remote repo creation/publish path and complete first push
 
 ## Near-term
 - [ ] Add small local HTML dashboard
