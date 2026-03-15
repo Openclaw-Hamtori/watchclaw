@@ -15,6 +15,7 @@ PATTERNS = [
         "regex": re.compile(r"compaction.*reason=timeout|Compaction failed: Compaction timed out|compaction wait aborted", re.I),
         "summary": "Compaction timeout or abort detected",
         "next_action": "Reduce session bloat, inspect compaction settings, and prefer durable handoff artifacts.",
+        "category": "runtime",
     },
     {
         "id": "handshake_timeout",
@@ -22,6 +23,7 @@ PATTERNS = [
         "regex": re.compile(r"handshake.*timeout|probe.*timeout|close 1000", re.I),
         "summary": "Handshake / probe timeout signal detected",
         "next_action": "Inspect gateway reachability, auth/handshake logs, and timeout semantics.",
+        "category": "runtime",
     },
     {
         "id": "session_fragility",
@@ -29,6 +31,7 @@ PATTERNS = [
         "regex": re.compile(r"invalid session header|polling stall|stale response|using current snapshot", re.I),
         "summary": "Session fragility signal detected",
         "next_action": "Treat this session as fragile; create a handoff and consider reset/new-session recovery.",
+        "category": "runtime",
     },
     {
         "id": "tool_failure_python_missing",
@@ -36,6 +39,7 @@ PATTERNS = [
         "regex": re.compile(r"command not found: python", re.I),
         "summary": "A command used `python` but only `python3` may exist",
         "next_action": "Replace `python` with `python3` in scripts/cron jobs on this host.",
+        "category": "tooling",
     },
     {
         "id": "tool_failure_rg_missing",
@@ -43,6 +47,7 @@ PATTERNS = [
         "regex": re.compile(r"command not found: rg", re.I),
         "summary": "A command expected ripgrep (`rg`) but it is unavailable",
         "next_action": "Use `grep` fallback or install `rg` if desired.",
+        "category": "tooling",
     },
     {
         "id": "tool_failure_file_missing",
@@ -50,6 +55,7 @@ PATTERNS = [
         "regex": re.compile(r"read failed: ENOENT|no such file or directory", re.I),
         "summary": "A file-read operation targeted a missing file",
         "next_action": "Check whether the file should be created first or conditionally skipped.",
+        "category": "tooling",
     },
     {
         "id": "tool_failure_edit_mismatch",
@@ -57,6 +63,7 @@ PATTERNS = [
         "regex": re.compile(r"edit failed: Could not find the exact text", re.I),
         "summary": "An exact-text edit failed because the source content changed",
         "next_action": "Re-read the file and apply a fresh patch against current contents.",
+        "category": "tooling",
     },
 ]
 
@@ -74,6 +81,7 @@ class Incident:
     line: str
     line_no: int
     next_action: str
+    category: str
 
 
 def compact_line(line: str, max_len: int = 220) -> str:
@@ -110,6 +118,7 @@ def scan_file(path: Path) -> List[Incident]:
                         line=compact_line(line),
                         line_no=idx,
                         next_action=pattern["next_action"],
+                        category=pattern["category"],
                     )
                 )
                 break
@@ -179,6 +188,7 @@ def top_patterns(incidents: List[Incident]) -> List[Dict[str, object]]:
                 "firstLine": incident.line_no,
                 "sample": incident.line,
                 "next_action": incident.next_action,
+                "category": incident.category,
             }
         grouped[incident.pattern_id]["count"] += 1
         grouped[incident.pattern_id]["sources"].add(incident.source)
@@ -188,7 +198,13 @@ def top_patterns(incidents: List[Incident]) -> List[Dict[str, object]]:
         item["sourceCount"] = len(item["sources"])
         item["sources"] = sorted(item["sources"])
 
-    items.sort(key=lambda x: (-SEVERITY_RANK[str(x["severity"])] , -int(x["count"]), -int(x["sourceCount"]), int(x["firstLine"])))
+    items.sort(key=lambda x: (
+        0 if str(x["category"]) == "runtime" else 1,
+        -SEVERITY_RANK[str(x["severity"])],
+        -int(x["count"]),
+        -int(x["sourceCount"]),
+        int(x["firstLine"]),
+    ))
     return items
 
 
@@ -207,9 +223,17 @@ def source_summary(incidents: List[Incident]) -> List[Dict[str, object]]:
     return rows
 
 
-def filter_incidents(incidents: List[Incident], min_severity: str, suppress_low_noise: bool) -> List[Incident]:
+def filter_incidents(incidents: List[Incident], min_severity: str, suppress_low_noise: bool, runtime_focus: bool) -> List[Incident]:
     threshold = SEVERITY_RANK[min_severity]
     filtered = [i for i in incidents if SEVERITY_RANK[i.severity] >= threshold]
+
+    if runtime_focus:
+        runtime = [i for i in filtered if i.category == "runtime"]
+        tooling = [i for i in filtered if i.category != "runtime"]
+        counts = Counter(i.pattern_id for i in tooling)
+        tooling = [i for i in tooling if counts[i.pattern_id] >= 5]
+        filtered = runtime + tooling
+
     if not suppress_low_noise:
         return filtered
 
@@ -219,7 +243,8 @@ def filter_incidents(incidents: List[Incident], min_severity: str, suppress_low_
         if incident.severity != "low":
             result.append(incident)
             continue
-        if counts[incident.pattern_id] >= 3:
+        threshold_count = 5 if runtime_focus else 3
+        if counts[incident.pattern_id] >= threshold_count:
             result.append(incident)
     return result
 
@@ -245,6 +270,7 @@ def render_html_dashboard(out_dir: Path, payload: Dict[str, object]) -> None:
         "<div class='card'>"
         f"<div class='card-head'><span class='badge {badge_class(str(item['severity']))}'>{escape(str(item['severity']).upper())}</span>"
         f"<strong>{escape(str(item['summary']))}</strong></div>"
+        f"<p>Category: <strong>{escape(str(item['category']))}</strong></p>"
         f"<p>Count: <strong>{item['count']}</strong> across <strong>{item['sourceCount']}</strong> source(s)</p>"
         f"<p class='muted'>Sample: <code>{escape(str(item['sample']))}</code></p>"
         f"<p><strong>Next:</strong> {escape(str(item['next_action']))}</p>"
@@ -252,69 +278,11 @@ def render_html_dashboard(out_dir: Path, payload: Dict[str, object]) -> None:
         for item in patterns
     ) or "<div class='card'><p>No known incident patterns detected under current filters.</p></div>"
 
-    html = f"""<!doctype html>
-<html lang='en'>
-<head>
-  <meta charset='utf-8'>
-  <meta name='viewport' content='width=device-width, initial-scale=1'>
-  <title>Watchclaw Dashboard</title>
-  <style>
-    :root {{ color-scheme: dark; }}
-    body {{ font-family: Inter, ui-sans-serif, system-ui, -apple-system, sans-serif; margin: 0; background: #0b1020; color: #e8ecf3; }}
-    .wrap {{ max-width: 1080px; margin: 0 auto; padding: 32px 20px 56px; }}
-    h1, h2 {{ margin: 0 0 12px; }}
-    .hero {{ display: grid; gap: 12px; margin-bottom: 24px; }}
-    .stats {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 18px 0 24px; }}
-    .stat, .card {{ background: #121933; border: 1px solid #243055; border-radius: 14px; padding: 16px; box-shadow: 0 8px 24px rgba(0,0,0,.18); }}
-    .stat .label {{ font-size: 12px; color: #9aa6c3; text-transform: uppercase; letter-spacing: .08em; }}
-    .stat .value {{ margin-top: 8px; font-size: 28px; font-weight: 700; }}
-    .muted {{ color: #98a3bd; }}
-    .badge {{ display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; letter-spacing: .05em; }}
-    .sev-high {{ background: rgba(239, 68, 68, .18); color: #fca5a5; }}
-    .sev-medium {{ background: rgba(245, 158, 11, .18); color: #fcd34d; }}
-    .sev-low {{ background: rgba(59, 130, 246, .18); color: #93c5fd; }}
-    .cards {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin-top: 14px; }}
-    .card-head {{ display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }}
-    table {{ width: 100%; border-collapse: collapse; background: #121933; border-radius: 14px; overflow: hidden; border: 1px solid #243055; }}
-    th, td {{ text-align: left; padding: 12px 14px; border-bottom: 1px solid #243055; vertical-align: top; }}
-    th {{ color: #a9b4cc; font-size: 13px; }}
-    code {{ white-space: pre-wrap; word-break: break-word; color: #cfe1ff; }}
-    .footer {{ margin-top: 30px; color: #93a0bc; font-size: 13px; }}
-  </style>
-</head>
-<body>
-  <div class='wrap'>
-    <div class='hero'>
-      <h1>Watchclaw Dashboard</h1>
-      <div class='muted'>Operator-facing runtime risk summary for agent workflows.</div>
-      <div class='muted'>Filters: minSeverity={escape(str(filters['minSeverity']))}, suppressLowNoise={escape(str(filters['suppressLowNoise']).lower())}</div>
-    </div>
-
-    <div class='stats'>
-      <div class='stat'><div class='label'>Overall risk</div><div class='value'>{escape(risk.upper())}</div></div>
-      <div class='stat'><div class='label'>Recurring score</div><div class='value'>{recurring['score']}</div><div class='muted'>{escape(str(recurring['band']))}</div></div>
-      <div class='stat'><div class='label'>Incidents</div><div class='value'>{payload['incidentCount']}</div></div>
-      <div class='stat'><div class='label'>Sources</div><div class='value'>{len(payload['sources'])}</div></div>
-    </div>
-
-    <h2>Source summary</h2>
-    <table>
-      <thead><tr><th>Source</th><th>Incidents</th><th>Severity breakdown</th></tr></thead>
-      <tbody>{source_html}</tbody>
-    </table>
-
-    <h2 style='margin-top: 24px;'>Pattern summary</h2>
-    <div class='cards'>{pattern_html}</div>
-
-    <div class='footer'>Generated by Watchclaw. Use this dashboard together with <code>reports/operator-summary.md</code> and <code>exports/durable-note.md</code>.</div>
-  </div>
-</body>
-</html>
-"""
+    html = f"<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>Watchclaw Dashboard</title><style>:root{{color-scheme:dark;}}body{{font-family:Inter,ui-sans-serif,system-ui,-apple-system,sans-serif;margin:0;background:#0b1020;color:#e8ecf3;}}.wrap{{max-width:1080px;margin:0 auto;padding:32px 20px 56px;}}h1,h2{{margin:0 0 12px;}}.hero{{display:grid;gap:12px;margin-bottom:24px;}}.stats{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:18px 0 24px;}}.stat,.card{{background:#121933;border:1px solid #243055;border-radius:14px;padding:16px;box-shadow:0 8px 24px rgba(0,0,0,.18);}}.stat .label{{font-size:12px;color:#9aa6c3;text-transform:uppercase;letter-spacing:.08em;}}.stat .value{{margin-top:8px;font-size:28px;font-weight:700;}}.muted{{color:#98a3bd;}}.badge{{display:inline-block;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:700;letter-spacing:.05em;}}.sev-high{{background:rgba(239,68,68,.18);color:#fca5a5;}}.sev-medium{{background:rgba(245,158,11,.18);color:#fcd34d;}}.sev-low{{background:rgba(59,130,246,.18);color:#93c5fd;}}.cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin-top:14px;}}.card-head{{display:flex;gap:10px;align-items:center;margin-bottom:10px;}}table{{width:100%;border-collapse:collapse;background:#121933;border-radius:14px;overflow:hidden;border:1px solid #243055;}}th,td{{text-align:left;padding:12px 14px;border-bottom:1px solid #243055;vertical-align:top;}}th{{color:#a9b4cc;font-size:13px;}}code{{white-space:pre-wrap;word-break:break-word;color:#cfe1ff;}}.footer{{margin-top:30px;color:#93a0bc;font-size:13px;}}</style></head><body><div class='wrap'><div class='hero'><h1>Watchclaw Dashboard</h1><div class='muted'>Operator-facing runtime risk summary for agent workflows.</div><div class='muted'>Filters: minSeverity={escape(str(filters['minSeverity']))}, suppressLowNoise={escape(str(filters['suppressLowNoise']).lower())}, runtimeFocus={escape(str(filters['runtimeFocus']).lower())}</div></div><div class='stats'><div class='stat'><div class='label'>Overall risk</div><div class='value'>{escape(risk.upper())}</div></div><div class='stat'><div class='label'>Recurring score</div><div class='value'>{recurring['score']}</div><div class='muted'>{escape(str(recurring['band']))}</div></div><div class='stat'><div class='label'>Incidents</div><div class='value'>{payload['incidentCount']}</div></div><div class='stat'><div class='label'>Sources</div><div class='value'>{len(payload['sources'])}</div></div></div><h2>Source summary</h2><table><thead><tr><th>Source</th><th>Incidents</th><th>Severity breakdown</th></tr></thead><tbody>{source_html}</tbody></table><h2 style='margin-top:24px;'>Pattern summary</h2><div class='cards'>{pattern_html}</div><div class='footer'>Generated by Watchclaw. Use this dashboard together with <code>reports/operator-summary.md</code> and <code>exports/durable-note.md</code>.</div></div></body></html>"
     (reports_dir / "dashboard.html").write_text(html)
 
 
-def write_outputs(out_dir: Path, incidents: List[Incident], sources: List[Path], min_severity: str, suppress_low_noise: bool) -> None:
+def write_outputs(out_dir: Path, incidents: List[Incident], sources: List[Path], min_severity: str, suppress_low_noise: bool, runtime_focus: bool) -> None:
     incidents_dir = out_dir / "incidents"
     reports_dir = out_dir / "reports"
     exports_dir = out_dir / "exports"
@@ -323,7 +291,7 @@ def write_outputs(out_dir: Path, incidents: List[Incident], sources: List[Path],
     exports_dir.mkdir(parents=True, exist_ok=True)
 
     deduped = dedupe_incidents(incidents)
-    filtered = filter_incidents(deduped, min_severity=min_severity, suppress_low_noise=suppress_low_noise)
+    filtered = filter_incidents(deduped, min_severity=min_severity, suppress_low_noise=suppress_low_noise, runtime_focus=runtime_focus)
     grouped = top_patterns(filtered)
     sev_counts = Counter(i.severity for i in filtered)
     risk = overall_risk(filtered)
@@ -341,6 +309,7 @@ def write_outputs(out_dir: Path, incidents: List[Incident], sources: List[Path],
         "filters": {
             "minSeverity": min_severity,
             "suppressLowNoise": suppress_low_noise,
+            "runtimeFocus": runtime_focus,
         },
         "incidents": [asdict(i) for i in filtered],
     }
@@ -353,7 +322,7 @@ def write_outputs(out_dir: Path, incidents: List[Incident], sources: List[Path],
         f"- Overall risk: **{risk.upper()}**",
         f"- Recurring risk score: **{recurring['score']}** (`{recurring['band']}`)",
         f"- Incident count: **{len(filtered)}**",
-        f"- Active filters: `minSeverity={min_severity}, suppressLowNoise={str(suppress_low_noise).lower()}`",
+        f"- Active filters: `minSeverity={min_severity}, suppressLowNoise={str(suppress_low_noise).lower()}, runtimeFocus={str(runtime_focus).lower()}`",
         f"- Severity breakdown: `{json.dumps(dict(sev_counts), ensure_ascii=False)}`",
         "",
         "## Source summary",
@@ -370,7 +339,7 @@ def write_outputs(out_dir: Path, incidents: List[Incident], sources: List[Path],
     else:
         for item in grouped[:8]:
             summary_lines += [
-                f"- [{item['severity']}] {item['summary']} × {item['count']} across {item['sourceCount']} source(s)",
+                f"- [{item['severity']}] [{item['category']}] {item['summary']} × {item['count']} across {item['sourceCount']} source(s)",
                 f"  - sample: `{item['sample']}`",
                 f"  - next: {item['next_action']}",
             ]
@@ -405,7 +374,7 @@ def write_outputs(out_dir: Path, incidents: List[Incident], sources: List[Path],
     else:
         for item in grouped[:5]:
             handoff_lines.append(
-                f"- [{item['severity']}] {item['summary']} × {item['count']} across {item['sourceCount']} source(s) → {item['next_action']}"
+                f"- [{item['severity']}] [{item['category']}] {item['summary']} × {item['count']} across {item['sourceCount']} source(s) → {item['next_action']}"
             )
 
     handoff_lines += [
@@ -423,14 +392,14 @@ def write_outputs(out_dir: Path, incidents: List[Incident], sources: List[Path],
         f"Date basis: {', '.join(str(s) for s in sources)}",
         f"Overall risk: {risk}",
         f"Recurring risk score: {recurring['score']} ({recurring['band']})",
-        f"Filters: minSeverity={min_severity}, suppressLowNoise={str(suppress_low_noise).lower()}",
+        f"Filters: minSeverity={min_severity}, suppressLowNoise={str(suppress_low_noise).lower()}, runtimeFocus={str(runtime_focus).lower()}",
         "",
         "## Suggested durable note",
     ]
     if grouped:
         for item in grouped[:5]:
             durable_lines.append(
-                f"- {item['summary']} recurred {item['count']} time(s) across {item['sourceCount']} source(s). Next action: {item['next_action']}"
+                f"- [{item['category']}] {item['summary']} recurred {item['count']} time(s) across {item['sourceCount']} source(s). Next action: {item['next_action']}"
             )
     else:
         durable_lines.append("- No durable incidents suggested from this scan.")
@@ -464,6 +433,7 @@ def main():
     parser.add_argument("--config", help="Path to config JSON")
     parser.add_argument("--min-severity", choices=["low", "medium", "high"], help="Minimum severity to include")
     parser.add_argument("--suppress-low-noise", action="store_true", help="Hide one-off low-severity noise patterns")
+    parser.add_argument("--runtime-focus", action="store_true", help="Prioritize runtime issues and heavily downrank tooling noise")
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -473,6 +443,7 @@ def main():
     out_arg = args.out or str(config.get("out", "."))
     min_severity = args.min_severity or str(config.get("minSeverity", "low"))
     suppress_low_noise = args.suppress_low_noise or bool(config.get("suppressLowNoise", False))
+    runtime_focus = args.runtime_focus or bool(config.get("runtimeFocus", False))
 
     sources = resolve_sources(log_arg, log_dir_arg, latest_arg)
     if not sources:
@@ -483,8 +454,8 @@ def main():
     for source in sources:
         incidents.extend(scan_file(source))
 
-    filtered = filter_incidents(dedupe_incidents(incidents), min_severity=min_severity, suppress_low_noise=suppress_low_noise)
-    write_outputs(out_dir, incidents, sources, min_severity=min_severity, suppress_low_noise=suppress_low_noise)
+    filtered = filter_incidents(dedupe_incidents(incidents), min_severity=min_severity, suppress_low_noise=suppress_low_noise, runtime_focus=runtime_focus)
+    write_outputs(out_dir, incidents, sources, min_severity=min_severity, suppress_low_noise=suppress_low_noise, runtime_focus=runtime_focus)
     print(json.dumps({
         "ok": True,
         "sources": len(sources),
